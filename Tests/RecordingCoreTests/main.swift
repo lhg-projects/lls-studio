@@ -1190,6 +1190,42 @@ func testPlatformPresetCanvasSizes() throws {
                "圆角默认 20pt")
 }
 
+func testWindowCaptureGeometry() throws {
+    let windows = [
+        CGRect(x: 100, y: 100, width: 800, height: 600),
+        CGRect(x: 700, y: 400, width: 400, height: 300),   // 重叠弹窗
+        CGRect(x: 500, y: 500, width: 20, height: 20)      // 装饰小窗,应被过滤
+    ]
+    let union = WindowCaptureGeometry.unionRect(ofFrames: windows)
+    try expect(union == CGRect(x: 100, y: 100, width: 1000, height: 600),
+               "联合矩形应纳入弹窗、排除装饰小窗")
+    try expect(WindowCaptureGeometry.unionRect(ofFrames: []) == nil, "空列表应返回 nil")
+    try expect(WindowCaptureGeometry.unionRect(ofFrames: [CGRect(x: 0, y: 0, width: 10, height: 10)]) == nil,
+               "只有装饰小窗应返回 nil")
+
+    // 包含式扩展：2:1 初始比例，弹窗向下延伸，比例不变且包含
+    let base = CGRect(x: 0, y: 0, width: 1000, height: 500)
+    let withDialog = CGRect(x: 400, y: 300, width: 1000, height: 800)
+    let display = CGRect(x: 0, y: 0, width: 2000, height: 1500)
+    let contain = WindowCaptureGeometry.containRect(aspectOf: base, containing: withDialog, in: display)
+    try expect(contain.contains(withDialog), "扩展后应完整包含联合范围")
+    try expect(abs(contain.width / contain.height - 2.0) < 0.001, "宽高比应保持不变")
+
+    // 联合范围超出屏幕：退回屏幕内同比例最大矩形
+    let huge = CGRect(x: 0, y: 0, width: 3000, height: 1400)
+    let fallback = WindowCaptureGeometry.containRect(aspectOf: base, containing: huge, in: display)
+    try expect(abs(fallback.width - 2000) < 0.5 && abs(fallback.height - 1000) < 0.5,
+               "应退回屏幕内同比例最大矩形（2000×1000）")
+
+    // sourceRect 平移（SCK 左上原点系内纯平移）
+    let source = WindowCaptureGeometry.sourceRect(
+        for: CGRect(x: 150, y: 200, width: 100, height: 80),
+        in: CGRect(x: 100, y: 100, width: 1920, height: 1080)
+    )
+    try expect(source == CGRect(x: 50, y: 100, width: 100, height: 80),
+               "sourceRect 应为显示器坐标系内平移")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("AudioStartGate", testAudioStartGate),
     ("BoundedDropOldestBuffer", testBoundedDropOldestBuffer),
@@ -1227,7 +1263,8 @@ let tests: [(String, () throws -> Void)] = [
     ("CursorPixelRendering", testCursorPixelRendering),
     ("IdleSpanDetection", testIdleSpanDetection),
     ("AgentEditPromptAndApplier", testAgentEditPromptAndApplier),
-    ("PlatformPresetCanvasSizes", testPlatformPresetCanvasSizes)
+    ("PlatformPresetCanvasSizes", testPlatformPresetCanvasSizes),
+    ("WindowCaptureGeometry", testWindowCaptureGeometry)
 ]
 
 do {

@@ -132,6 +132,12 @@ class ScreenRecorder: NSObject, ObservableObject {
     /// 录制期间由 CursorEventTracker 采集光标事件轨时，源画面不再叠加系统光标，
     /// 导出端用自绘光标（更平滑、可放大、可加点击波纹）。
     private var hideSystemCursor = false
+    // 窗口录制（应用级采集）的跟随状态
+    private var windowUnionTrackingTask: Task<Void, Never>?
+    private var windowCaptureDisplayFrame: CGRect = .zero
+    private var windowCaptureAspectRect: CGRect = .zero
+    private var windowCapturePixelSize: CGSize = .zero
+    private var lastAppliedWindowUnion: CGRect?
     
     // 音频录制配置
     private var systemAudioEnabled: Bool = false
@@ -293,9 +299,11 @@ class ScreenRecorder: NSObject, ObservableObject {
     
     func stopRecording(onCaptureStopped: (() -> Void)? = nil) async throws -> CapturedRecordingOutput? {
         guard isRecording else { return nil }
-        
+
         print("⏹️  停止屏幕录制...")
-        
+        windowUnionTrackingTask?.cancel()
+        windowUnionTrackingTask = nil
+
         // 停止stream
         if let stream = stream {
             try await stream.stopCapture()
@@ -350,6 +358,8 @@ class ScreenRecorder: NSObject, ObservableObject {
 
     private func cleanupAfterFailedStart() async {
         print("🧹 清理录制启动失败后的临时资源")
+        windowUnionTrackingTask?.cancel()
+        windowUnionTrackingTask = nil
 
         if let stream {
             try? await stream.stopCapture()
@@ -446,9 +456,108 @@ class ScreenRecorder: NSObject, ObservableObject {
 
         isFullScreen = false
         recordingModeName = "selectedWindow"
-        recordingRect = target.frame
+
+        // 应用级采集：软件弹出的设置框/对话框是独立窗口，单窗口滤镜
+        // （desktopIndependentWindow）录不到。改为采集该应用全部可见窗口
+        // 的联合矩形，弹窗自然在内。
+        let ownerProcessID = window.owningApplication?.processID
+        let captureUnion: CGRect
+        if let ownerProcessID {
+            let appWindowFrames = availableContent.windows
+                .filter { candidate in
+                    candidate.owningApplication?.processID == ownerProcessID
+                        && candidate.isOnScreen
+                        && candidate.frame.width >= 50
+                        && candidate.frame.height >= 50
+                }
+                .map(\.frame)
+            captureUnion = WindowCaptureGeometry.unionRect(ofFrames: appWindowFrames) ?? window.frame
+            print("🪟 应用级采集: \(appWindowFrames.count) 个窗口联合 \(captureUnion)")
+        } else {
+            captureUnion = window.frame
+        }
+
+        recordingRect = captureUnion
+        windowCaptureDisplayFrame = display.frame
+        windowCaptureAspectRect = captureUnion
+        lastAppliedWindowUnion = captureUnion
 
         try await setupStreamAndWriter(for: display, rect: nil, window: window, availableContent: availableContent)
+
+        if let ownerProcessID {
+            beginWindowUnionTracking(processID: ownerProcessID)
+        }
+    }
+
+    /// 窗口录制跟随：弹窗出现/窗口移动时，把 sourceRect 扩到新的联合范围。
+    /// 输出分辨率固定不变（AVAssetWriter 约束），联合范围按初始宽高比
+    /// 包含式扩展，画面等比缩放。0.5s 轮询，变化超过阈值才重配流。
+    private func beginWindowUnionTracking(processID: Int32) {
+        windowUnionTrackingTask?.cancel()
+        windowUnionTrackingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self, self.isRecording, let stream = self.stream else { break }
+                guard let content = try? await SCShareableContent.current else { continue }
+                let frames = content.windows
+                    .filter { candidate in
+                        candidate.owningApplication?.processID == processID
+                            && candidate.isOnScreen
+                            && candidate.frame.width >= 50
+                            && candidate.frame.height >= 50
+                    }
+                    .map(\.frame)
+                guard let union = WindowCaptureGeometry.unionRect(ofFrames: frames) else { continue }
+
+                let contain = WindowCaptureGeometry.containRect(
+                    aspectOf: self.windowCaptureAspectRect,
+                    containing: union,
+                    in: self.windowCaptureDisplayFrame
+                )
+                if let last = self.lastAppliedWindowUnion,
+                   abs(contain.minX - last.minX) < 12,
+                   abs(contain.minY - last.minY) < 12,
+                   abs(contain.width - last.width) < 12,
+                   abs(contain.height - last.height) < 12 {
+                    continue
+                }
+                self.lastAppliedWindowUnion = contain
+                self.recordingRect = contain
+                let config = self.rebuildWindowCaptureConfiguration()
+                do {
+                    try await stream.updateConfiguration(config)
+                    print("🪟 采集范围跟随: \(contain)")
+                } catch {
+                    print("⚠️ 采集范围跟随失败: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// 流重配用的完整配置（updateConfiguration 会整体替换，缺字段会回落默认值）。
+    /// 分辨率保持开录时的固定值，只动 sourceRect。
+    private func rebuildWindowCaptureConfiguration() -> SCStreamConfiguration {
+        let config = SCStreamConfiguration()
+        config.pixelFormat = screenCapturePixelFormat
+        config.showsCursor = !hideSystemCursor
+        config.scalesToFit = true
+        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(Self.screenTargetFrameRate))
+        config.capturesAudio = systemAudioEnabled
+        config.excludesCurrentProcessAudio = true
+        if #available(macOS 15.0, *) {
+            config.captureMicrophone = microphoneEnabled
+            if let deviceID = microphoneDeviceID {
+                config.microphoneCaptureDeviceID = deviceID
+            }
+        }
+        if let contain = lastAppliedWindowUnion {
+            config.sourceRect = WindowCaptureGeometry.sourceRect(for: contain, in: windowCaptureDisplayFrame)
+        }
+        config.width = Int(windowCapturePixelSize.width)
+        config.height = Int(windowCapturePixelSize.height)
+        config.queueDepth = 5
+        config.colorSpaceName = CGColorSpace.sRGB
+        return config
     }
 
     private func displayContaining(_ rect: CGRect, in displays: [SCDisplay]) -> SCDisplay? {
@@ -544,7 +653,16 @@ class ScreenRecorder: NSObject, ObservableObject {
         // 设置录制内容过滤器。Full screen uses this filter's display-specific
         // pointPixelScale so selected external Retina displays record at native pixels.
         let filter: SCContentFilter
-        if let window = window {
+        if let window = window, let ownerApp = window.owningApplication {
+            // 应用级采集（含弹窗）：整块显示器为源，sourceRect 钳在联合矩形
+            filter = SCContentFilter(display: display, including: [ownerApp], exceptingWindows: [])
+            if let captureRect = recordingRect {
+                config.sourceRect = WindowCaptureGeometry.sourceRect(for: captureRect, in: display.frame)
+            }
+            // 联合范围会随弹窗出现而扩大，按固定输出等比缩放
+            config.scalesToFit = true
+        } else if let window = window {
+            // 拿不到归属应用时退回单窗口（老行为，弹窗录不进来）
             filter = SCContentFilter(desktopIndependentWindow: window)
         } else {
             let excludedWindows = ownShareableWindows(in: availableContent)
@@ -564,12 +682,14 @@ class ScreenRecorder: NSObject, ObservableObject {
 
             config.width = alignedWidth
             config.height = alignedHeight
-            config.scalesToFit = false
+            config.scalesToFit = true
             config.queueDepth = 5
             config.colorSpaceName = CGColorSpace.sRGB
+            // 输出分辨率固定，跟随只动 sourceRect
+            windowCapturePixelSize = CGSize(width: alignedWidth, height: alignedHeight)
 
             print("🪟 窗口录制配置:")
-            print("   目标窗口: \(targetRect)")
+            print("   采集范围: \(targetRect)")
             print("   缩放因子: \(scaleFactor)")
             print("   输出分辨率: \(alignedWidth)x\(alignedHeight)")
         } else if let rect = rect {

@@ -410,3 +410,21 @@ grep -a "📊" /tmp/mem.log
 5. `CIRoundedRectangleGenerator` 的参数键是 `inputExtent`（CIVector），**不是** `inputWidth/inputHeight`——用错键抛 ObjC 异常直接崩掉导出。圆角蒙版已改用 CoreGraphics 绘制（与光标/波纹同一套画法）。
 
 **打包**：2.8.0 (build 28)，DMG 在桌面 `LLSStudio-2.8.0.dmg`。核心测试 34 项。
+
+---
+
+## 16. 2026-10-24：窗口录制改应用级采集（2.8.1）
+
+**报障**：窗口模式只录选中的那个窗口，软件弹出的设置框/对话框是**独立窗口**，录不进来。
+
+**修法**（`WindowCaptureGeometry.swift` + `ScreenRecorder`）：
+
+- 采集滤镜从单窗口（`desktopIndependentWindow`）换成**应用级**（`display + including [目标 app]`），该应用的所有窗口——含弹窗、设置框、面板——全部纳入。
+- `sourceRect` 钳在该应用全部可见窗口的**联合矩形**（SCWindow/SCDisplay 同为 SCK 左上原点系，纯平移即可，不做 AppKit 翻转）。
+- **输出分辨率开录时固定**（AVAssetWriter 约束）；弹窗出现/窗口移动时，后台任务每 0.5s 重算联合矩形，按初始宽高比"包含式"扩展后 `stream.updateConfiguration` 只动 sourceRect（画面等比缩一下，不变形、不闪分辨率）。日志关键字：`🪟 采集范围跟随`。
+- 拿不到窗口归属应用时自动退回老的单窗口滤镜（保底）。
+- 跟随任务在停录/启动失败清理时取消。
+
+**待真实使用确认**：弹窗捕获路径通过了 35 项核心测试（几何全测）与全屏回归自测，但"录窗口时真的弹一个框"没有自动化用例——下次窗口模式录课时弹一下设置框，日志里看到「采集范围跟随」即闭环。
+
+**打包**：2.8.1 (build 29)，DMG 在桌面。
