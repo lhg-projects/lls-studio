@@ -117,6 +117,10 @@ class ScreenRecorder: NSObject, ObservableObject {
     /// 最近一次停录的产物校验结果。停录后由 RecordingController 读取，
     /// 用于向用户报告"此条录制损坏"，而不是等导出时才看到黑屏。
     private(set) var lastValidation: RecordingOutputValidation?
+    /// 录制期资源水位巡检（内存/磁盘）的最新结论。nil = 正常。
+    /// UI 据此提示"尽快收尾/立即停止"，避免资源枯竭重演 2026-10-27 事故。
+    private(set) var lastResourceIssue: String?
+    private var resourceWatchdogTimer: Timer?
     /// 视频轨已写入的最后一帧时间戳。暂停/恢复边界上偶发非单调帧
     /// （2026-10-23 黑屏事故与 2026-10-24 自测复现：恢复后首帧 append 失败，
     /// writer 直接 .failed，moov 永远写不出来）。护栏：非单调帧丢弃，
@@ -253,6 +257,8 @@ class ScreenRecorder: NSObject, ObservableObject {
         print("🎬 开始屏幕录制...")
         self.hideSystemCursor = hideSystemCursor
         lastAppendedVideoPTS = nil
+        lastResourceIssue = nil
+        beginResourceWatchdog()
 
         do {
             self.outputURL = outputURL
@@ -291,10 +297,39 @@ class ScreenRecorder: NSObject, ObservableObject {
         print("✅ 屏幕录制已开始")
     }
     
+    /// 录制期资源水位巡检：每 60s 采一次（内存足迹 + 写入盘余量），
+    /// 异常结论挂到 lastResourceIssue（UI 轮询读取提示用户），并进日志。
+    /// 巡检不阻止录制——拦停是用户的决定，应用只负责把风险喊出来。
+    private func beginResourceWatchdog() {
+        resourceWatchdogTimer?.invalidate()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording, let outputURL = self.outputURL else { return }
+                let snapshot = ResourceWatchdog.snapshot(outputDirectory: outputURL.deletingLastPathComponent())
+                let issue = ResourceWatchdog.issue(for: snapshot)
+                if issue != self.lastResourceIssue {
+                    if let issue {
+                        print("🚨 资源水位: \(issue)")
+                    }
+                    self.lastResourceIssue = issue
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        resourceWatchdogTimer = timer
+    }
+
+    private func endResourceWatchdog() {
+        resourceWatchdogTimer?.invalidate()
+        resourceWatchdogTimer = nil
+        lastResourceIssue = nil
+    }
+
     func stopRecording(onCaptureStopped: (() -> Void)? = nil) async throws -> CapturedRecordingOutput? {
         guard isRecording else { return nil }
 
         print("⏹️  停止屏幕录制...")
+        endResourceWatchdog()
 
         // 停止stream
         if let stream = stream {
@@ -350,6 +385,7 @@ class ScreenRecorder: NSObject, ObservableObject {
 
     private func cleanupAfterFailedStart() async {
         print("🧹 清理录制启动失败后的临时资源")
+        endResourceWatchdog()
 
         if let stream {
             try? await stream.stopCapture()
@@ -2888,8 +2924,22 @@ class ScreenRecorder: NSObject, ObservableObject {
         videoWriterInput?.markAsFinished()
         audioWriterInput?.markAsFinished()
         microphoneWriterInput?.markAsFinished()
-        
-        await writer.finishWriting()
+
+        // finishWriting 在内存/磁盘枯竭时可能无限挂起（2026-10-27 长录制事故：
+        // 停止流程卡死，两条轨都没写出 moov）。30 秒兜底：超时强制 cancel，
+        // 文件即使不完整，也让停止流程继续走完归档与 metrics。
+        let finishTask = Task { [weak writer] in
+            await writer?.finishWriting()
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            if finishTask.isCancelled == false, writer.status == .writing {
+                print("⏱️ finishWriting 超过 30s 未完成（资源枯竭？），强制取消写入")
+                writer.cancelWriting()
+            }
+        }
+        await finishTask.value
+        timeoutTask.cancel()
         
         switch writer.status {
         case .completed:

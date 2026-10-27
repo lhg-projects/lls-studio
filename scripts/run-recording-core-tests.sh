@@ -29,6 +29,7 @@ xcrun swiftc \
   "$ROOT/CueRecord/Recording/Core/Recording/RecordingIdleSpanDetector.swift" \
   "$ROOT/CueRecord/Recording/Core/Recording/AgentEditPrompt.swift" \
   "$ROOT/CueRecord/Recording/Core/Recording/WindowCaptureGeometry.swift" \
+  "$ROOT/CueRecord/Recording/Core/Recording/ResourceWatchdog.swift" \
   "$ROOT/CueRecord/Recording/Core/Recording/RecordingEditorPresentation.swift" \
   "$ROOT/CueRecord/AI/AIModelCatalog.swift" \
   "$ROOT/CueRecord/AI/AIModelCatalogModelsDev.swift" \

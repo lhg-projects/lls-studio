@@ -1123,11 +1123,26 @@ final class RecordingController: ObservableObject {
                 self?.recordingState.updateRecordingDuration()
             }
         }
+        // 资源水位巡检是 ScreenRecorder 里 60s 一次的粗巡检；
+        // 这里每 2s 把结论搬到 lastError（UI 提示条），异常期间高频可见。
+        resourceUITimer?.invalidate()
+        resourceUITimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording else { return }
+                if let issue = self.screenRecorder.lastResourceIssue, self.lastError != issue {
+                    self.lastError = issue
+                }
+            }
+        }
     }
+
+    private var resourceUITimer: Timer?
 
     private func stopRecordingTimer() {
         recordingTimer?.invalidate()
         recordingTimer = nil
+        resourceUITimer?.invalidate()
+        resourceUITimer = nil
     }
 
     private func runPendingStopCompletions() {

@@ -1226,6 +1226,29 @@ func testWindowCaptureGeometry() throws {
                "sourceRect 应为显示器坐标系内平移")
 }
 
+func testResourceWatchdogLevels() throws {
+    try expect(ResourceWatchdog.diskLevel(freeDiskBytes: nil) == .ok, "读不出余量不告警")
+    try expect(ResourceWatchdog.diskLevel(freeDiskBytes: 20 << 30) == .ok, "20GB 应为正常")
+    try expect(ResourceWatchdog.diskLevel(freeDiskBytes: 5 << 30) == .low, "5GB 应为偏低")
+    try expect(ResourceWatchdog.diskLevel(freeDiskBytes: 1 << 30) == .critical, "1GB 应为危急")
+
+    let ok = ResourceWatchdog.Snapshot(freeDiskBytes: 20 << 30, memoryMegabytes: 500)
+    try expect(ResourceWatchdog.issue(for: ok) == nil, "正常水位无结论")
+
+    let low = ResourceWatchdog.Snapshot(freeDiskBytes: 5 << 30, memoryMegabytes: 500)
+    try expect(ResourceWatchdog.issue(for: low)?.contains("尽快收尾") == true, "低水位提示尽快收尾")
+
+    let critical = ResourceWatchdog.Snapshot(freeDiskBytes: 1 << 30, memoryMegabytes: 500)
+    try expect(ResourceWatchdog.issue(for: critical)?.contains("立即停止") == true, "危急水位提示立即停止")
+
+    let memory = ResourceWatchdog.Snapshot(freeDiskBytes: 20 << 30, memoryMegabytes: 2000)
+    try expect(ResourceWatchdog.issue(for: memory)?.contains("内存") == true, "内存异常应单独告警")
+
+    // 两条同时异常时磁盘优先（更紧急）
+    let both = ResourceWatchdog.Snapshot(freeDiskBytes: 1 << 30, memoryMegabytes: 2000)
+    try expect(ResourceWatchdog.issue(for: both)?.contains("磁盘") == true, "磁盘危急优先于内存告警")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("AudioStartGate", testAudioStartGate),
     ("BoundedDropOldestBuffer", testBoundedDropOldestBuffer),
@@ -1264,7 +1287,8 @@ let tests: [(String, () throws -> Void)] = [
     ("IdleSpanDetection", testIdleSpanDetection),
     ("AgentEditPromptAndApplier", testAgentEditPromptAndApplier),
     ("PlatformPresetCanvasSizes", testPlatformPresetCanvasSizes),
-    ("WindowCaptureGeometry", testWindowCaptureGeometry)
+    ("WindowCaptureGeometry", testWindowCaptureGeometry),
+    ("ResourceWatchdogLevels", testResourceWatchdogLevels)
 ]
 
 do {
