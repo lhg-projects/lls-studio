@@ -1249,6 +1249,36 @@ func testResourceWatchdogLevels() throws {
     try expect(ResourceWatchdog.issue(for: both)?.contains("磁盘") == true, "磁盘危急优先于内存告警")
 }
 
+func testRecordingRecoveryInfoRoundTrip() throws {
+    let tempDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("recovery-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let outputURL = tempDir.appendingPathComponent("AreaRecord_test.mov")
+    let info = RecordingRecoveryInfo(
+        version: 1,
+        outputFileName: "AreaRecord_test.mov",
+        width: 2940,
+        height: 1912,
+        screenFrameRate: 60,
+        pixelFormat: "BGRA",
+        codec: "h264",
+        averageBitRate: 16_000_000,
+        maxKeyFrameIntervalDuration: 2.0,
+        hint: "test"
+    )
+    RecordingRecoveryStore.save(info, for: outputURL)
+    let loaded = RecordingRecoveryStore.load(for: outputURL)
+    try expect(loaded == info, "恢复参数应可完整往返")
+    try expect(RecordingRecoveryInfo.recoveryURL(for: outputURL).lastPathComponent == "AreaRecord_test_recovery.json",
+               "恢复文件命名应为 <base>_recovery.json")
+
+    RecordingRecoveryStore.remove(for: outputURL)
+    try expect(!FileManager.default.fileExists(atPath: RecordingRecoveryInfo.recoveryURL(for: outputURL).path),
+               "正常收尾后恢复文件应被删除")
+}
+
 let tests: [(String, () throws -> Void)] = [
     ("AudioStartGate", testAudioStartGate),
     ("BoundedDropOldestBuffer", testBoundedDropOldestBuffer),
@@ -1288,7 +1318,8 @@ let tests: [(String, () throws -> Void)] = [
     ("AgentEditPromptAndApplier", testAgentEditPromptAndApplier),
     ("PlatformPresetCanvasSizes", testPlatformPresetCanvasSizes),
     ("WindowCaptureGeometry", testWindowCaptureGeometry),
-    ("ResourceWatchdogLevels", testResourceWatchdogLevels)
+    ("ResourceWatchdogLevels", testResourceWatchdogLevels),
+    ("RecordingRecoveryInfoRoundTrip", testRecordingRecoveryInfoRoundTrip)
 ]
 
 do {

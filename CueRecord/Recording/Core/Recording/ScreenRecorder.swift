@@ -126,6 +126,9 @@ class ScreenRecorder: NSObject, ObservableObject {
     /// writer 直接 .failed，moov 永远写不出来）。护栏：非单调帧丢弃，
     /// 丢一帧无感，毒死 writer 是全损。
     private var lastAppendedVideoPTS: CMTime?
+    /// 开录时 writer 的实际配置（恢复参数凭据用）
+    private var lastConfiguredScreenSize: (width: Int, height: Int)?
+    private var lastConfiguredScreenBitRate: Int?
     private var screenCapturePixelFormat: OSType = kCVPixelFormatType_32BGRA
     
     // 录制配置
@@ -294,7 +297,29 @@ class ScreenRecorder: NSObject, ObservableObject {
         }
         
         isRecording = true
+        writeRecoveryInfo()
         print("✅ 屏幕录制已开始")
+    }
+
+    /// 开录即写恢复参数（借鉴 Screen Studio/HuaStudio 的"假设崩溃一定发生"）：
+    /// 无 moov 的 mdat 靠 untrunc + 同参数参考轨才能救回，这个文件就是参数凭据。
+    /// 停录成功后删除；残留即表示"上次录制未正常收尾，可用此参数修复"。
+    private func writeRecoveryInfo() {
+        guard let outputURL, let size = lastConfiguredScreenSize else { return }
+        let info = RecordingRecoveryInfo(
+            version: 1,
+            outputFileName: outputURL.lastPathComponent,
+            width: size.width,
+            height: size.height,
+            screenFrameRate: Self.screenTargetFrameRate,
+            pixelFormat: RecordingPixelFormatPolicy.selectedFormat().displayName,
+            codec: "h264",
+            averageBitRate: lastConfiguredScreenBitRate ?? 0,
+            maxKeyFrameIntervalDuration: 2.0,
+            hint: "屏幕轨损坏时:用本参数找同宽高的健康 .mov 做 untrunc 参考轨修复;摄像头轨同理用 _camera.mov 的宽高。"
+        )
+        RecordingRecoveryStore.save(info, for: outputURL)
+        print("🛟 恢复参数已写入: \(RecordingRecoveryInfo.recoveryURL(for: outputURL).lastPathComponent)")
     }
     
     /// 录制期资源水位巡检：每 60s 采一次（内存足迹 + 写入盘余量），
@@ -788,7 +813,9 @@ class ScreenRecorder: NSObject, ObservableObject {
         ]
         
         audioWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
-        audioWriterInput?.expectsMediaDataInRealTime = true
+        // 及时落盘:实时模式让 AVAssetWriter 缓攒已编码数据,内存随时长缓升,
+        // 且崩溃时未写出的段全部丢失(2026-10-27 长录制事故)。false = 有背压、写完即刷。
+        audioWriterInput?.expectsMediaDataInRealTime = false
         
         guard let audioInput = audioWriterInput else {
             throw RecordingError.audioSetupFailed
@@ -813,7 +840,7 @@ class ScreenRecorder: NSObject, ObservableObject {
         ]
         
         microphoneWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: micSettings)
-        microphoneWriterInput?.expectsMediaDataInRealTime = true
+        microphoneWriterInput?.expectsMediaDataInRealTime = false
         
         guard let micInput = microphoneWriterInput else {
             throw RecordingError.audioSetupFailed
@@ -847,7 +874,7 @@ class ScreenRecorder: NSObject, ObservableObject {
         ]
         
         microphoneWriterInput = AVAssetWriterInput(mediaType: .audio, outputSettings: micSettings)
-        microphoneWriterInput?.expectsMediaDataInRealTime = true
+        microphoneWriterInput?.expectsMediaDataInRealTime = false
         
         guard let micInput = microphoneWriterInput else {
             throw RecordingError.audioSetupFailed
@@ -921,6 +948,7 @@ class ScreenRecorder: NSObject, ObservableObject {
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: bitRate,
                 AVVideoMaxKeyFrameIntervalKey: Self.screenTargetFrameRate / 2,
+                AVVideoMaxKeyFrameIntervalDurationKey: 2.0,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoAllowFrameReorderingKey: false,
                 AVVideoExpectedSourceFrameRateKey: Self.screenTargetFrameRate,
@@ -931,7 +959,8 @@ class ScreenRecorder: NSObject, ObservableObject {
         ]
         
         videoWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        videoWriterInput?.expectsMediaDataInRealTime = true
+        // 及时落盘(借鉴 Screen Studio/ffmpeg 管线):与 camera/audio writer 同理
+        videoWriterInput?.expectsMediaDataInRealTime = false
         
         guard let writerInput = videoWriterInput else {
             throw RecordingError.writerSetupFailed
@@ -956,6 +985,8 @@ class ScreenRecorder: NSObject, ObservableObject {
         recordingStartTime = CMTime.zero
         
         print("🎥 视频写入器配置完成")
+        lastConfiguredScreenSize = (width, height)
+        lastConfiguredScreenBitRate = bitRate
     }
 
     // MARK: - 独立摄像头视频轨
@@ -1080,6 +1111,7 @@ class ScreenRecorder: NSObject, ObservableObject {
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: bitRate,
                 AVVideoMaxKeyFrameIntervalKey: 30,
+                AVVideoMaxKeyFrameIntervalDurationKey: 2.0,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoAllowFrameReorderingKey: false,
                 AVVideoExpectedSourceFrameRateKey: 30,
@@ -1088,7 +1120,8 @@ class ScreenRecorder: NSObject, ObservableObject {
         ]
 
         cameraWriterInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        cameraWriterInput?.expectsMediaDataInRealTime = true
+        // 及时落盘(借鉴 Screen Studio):崩溃时已写出的段更完整
+        cameraWriterInput?.expectsMediaDataInRealTime = false
 
         guard let writerInput = cameraWriterInput, writer.canAdd(writerInput) else {
             throw RecordingError.writerSetupFailed
@@ -2944,6 +2977,10 @@ class ScreenRecorder: NSObject, ObservableObject {
         switch writer.status {
         case .completed:
             print("✅ 视频文件保存成功: \(completedOutputURL?.lastPathComponent ?? "")")
+            // 正常收尾,恢复参数完成使命
+            if let url = completedOutputURL {
+                RecordingRecoveryStore.remove(for: url)
+            }
             if let url = completedOutputURL {
                 let fileSize = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64 ?? 0
                 print("📄 文件大小: \(fileSize ?? 0) bytes")
