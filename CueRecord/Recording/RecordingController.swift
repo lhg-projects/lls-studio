@@ -46,6 +46,8 @@ final class RecordingController: ObservableObject {
 
     private var queuedRenderRequest: QueuedRenderRequest?
     private var transcriptAccumulator: RecordingTranscriptAccumulator?
+    /// 停录时的成片时长(含暂停扣除)。损坏弹窗用它区分"真损坏"与"几秒的试录"。
+    private var recordingDurationAtStop: Double = 0
 
     var cameraManager: CameraManager {
         screenRecorder.getCameraManager()
@@ -522,6 +524,9 @@ final class RecordingController: ObservableObject {
                 self?.runPendingStopCompletions()
             }
 
+            // recordingState.stopRecording() 会清空时长,先存下来供损坏判定用
+            recordingState.updateRecordingDuration()
+            recordingDurationAtStop = recordingState.recordingDuration
             do {
                 pendingCapturedRecording = try await screenRecorder.stopRecording()
                     ?? capturedRecordingOutput(for: expectedOutputURL)
@@ -550,6 +555,15 @@ final class RecordingController: ObservableObject {
     /// 用户直到导出看到全黑成片才知道录废了（2026-10-23 事故，HANDOVER 第 12 节）。
     private func presentDamageAlertIfNeeded(validation: RecordingOutputValidation?, outputURL: URL?) {
         guard let validation, validation.health == .damaged else { return }
+
+        // 开录后几秒就停的试录（第一帧还没到 writer 就收尾了）是正常现象，
+        // 不是损坏——红色警报弹窗吓人还误导（2026-10-29 15:47 报障）。
+        // 7 秒内的 take 只静默记日志，文件照常保留。
+        if recordingDurationAtStop < 3.0 {
+            print("🧪 时长 \(String(format: "%.1f", recordingDurationAtStop))s 的录制无内容（试录），不弹损坏警告")
+            return
+        }
+
         // 自测模式不能弹模态框（无人值守会卡死），只落日志与报告
         guard !RecordingSmokeTestRunner.isRequested else {
             print("🧪 [smoke] 损坏弹窗跳过：\(validation.issues.joined(separator: "；"))")
