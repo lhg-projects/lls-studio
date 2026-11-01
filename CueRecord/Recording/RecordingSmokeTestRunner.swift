@@ -37,14 +37,17 @@ enum RecordingSmokeTestRunner {
 
         let controller = RecordingController.shared
         // 自测要确定性：全屏模式、摄像头关闭（避免无人值守时录到人脸）。
-        // 用户原设置事后恢复。
+        // 用户原设置事后恢复。自动缩放默认关闭，自测要覆盖缩放管线全程，显式打开。
         let previousMode = controller.recordingState.captureMode
         let previousCamera = controller.recordingState.cameraOverlayEnabled
+        let previousAutoZoom = controller.isAutoZoomEnabled
         controller.recordingState.captureMode = .fullScreen
         controller.recordingState.cameraOverlayEnabled = false
+        controller.setAutoZoomEnabled(true)
         defer {
             controller.recordingState.captureMode = previousMode
             controller.recordingState.cameraOverlayEnabled = previousCamera
+            controller.setAutoZoomEnabled(previousAutoZoom)
         }
 
         print("🧪 [smoke] 开始：录 3s → 暂停 3s → 恢复 3s → 停止 → 导出")

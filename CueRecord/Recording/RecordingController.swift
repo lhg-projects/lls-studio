@@ -685,10 +685,22 @@ final class RecordingController: ObservableObject {
     }
 
     /// 挂载转写钩子：提词器识别开着时，把讲的话连同成片时间点记进字幕稿。
-    /// 暂停期间音频不进成片，暂停时的语音不记录，避免字幕与成片错位。
+    /// 自动缩放动效总开关（默认关闭，刘老师 2026-11-02 指定）。
+    /// 关闭时停录不生成缩放区间，导出无任何放大/缩小动效；
+    /// Agent 剪辑（⌘⇧E）显式产出的缩放不受此开关影响。
+    static let autoZoomEnabledDefaultsKey = "recording.autoZoomEnabled"
+    var isAutoZoomEnabled: Bool {
+        UserDefaults.standard.bool(forKey: Self.autoZoomEnabledDefaultsKey) // 未设置时 = false
+    }
+    func setAutoZoomEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Self.autoZoomEnabledDefaultsKey)
+    }
+
     /// 停录后依据光标事件轨生成自动缩放区间（点击 = 操作焦点，停留 = 阅读焦点）。
     /// 导出时 ZoomTimeline 按 <base>_zoom.json 做缓动放大。
+    /// 默认关闭（见 isAutoZoomEnabled）；关闭时不生成任何缩放区间。
     private func generateAutoZoomRanges(outputURL: URL) {
+        guard isAutoZoomEnabled else { return }
         guard let cursorTrack = CursorEventStore.load(from: CursorEventStore.cursorURL(for: outputURL)) else { return }
         let ranges = ZoomHeuristic.ranges(
             from: cursorTrack.events,
