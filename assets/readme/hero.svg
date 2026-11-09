@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="380" viewBox="0 0 1200 380"
+     role="img" aria-labelledby="title desc">
+  <title id="title">刘老师 · 录课台 — macOS 录屏提词器：录屏、提词、出镜、成片一个 App</title>
+  <desc id="desc">左侧是项目名与一句话价值；右侧是按品牌规范画的应用图标：石墨黑圆角方底、白色课件卡三行讲稿、圆形出镜窗与录制红点。</desc>
+
+  <defs>
+    <linearGradient id="graphite" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#282C36"/>
+      <stop offset="1" stop-color="#0D0F14"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="380" rx="26" fill="url(#graphite)"/>
+
+  <!-- Title block -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif">
+    <text x="56" y="72" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" letter-spacing="2" fill="#FF7A5C">MACOS · SWIFT · 4K · NATIVE</text>
+    <text x="56" y="146" font-size="60" font-weight="700" fill="#FFFFFF">刘老师 · 录课台</text>
+    <text x="56" y="194" font-size="27" fill="#E8E6E1">录屏、提词、出镜、成片，一个 App 全包。</text>
+    <text x="56" y="230" font-size="22" fill="#A7ABB5">照着提词器念，屏幕、摄像头、声音一次录全。</text>
+    <line x1="56" y1="258" x2="600" y2="258" stroke="#2A2E38" stroke-width="2"/>
+    <text x="56" y="292" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+          font-size="18" fill="#A7ABB5">macOS 14.1+ · Apple Silicon / Intel&#160;&#160;Apache-2.0</text>
+    <text x="56" y="326" font-size="18" fill="#E8E6E1">当前版本 2.9.0（build 34）· 基于 CueRecord v2.0.4 二次开发</text>
+  </g>
+
+  <!-- Brand icon: graphite rounded square + white card + PiP + red dot -->
+  <g>
+    <rect x="800" y="52" width="300" height="276" rx="44" fill="#171A21" stroke="#3A3F4C" stroke-width="2"/>
+    <!-- white lecture card -->
+    <rect x="836" y="92" width="180" height="128" rx="14" fill="#FFFFFF"/>
+    <line x1="856" y1="122" x2="996" y2="122" stroke="#282C36" stroke-width="7" stroke-linecap="round"/>
+    <line x1="856" y1="150" x2="996" y2="150" stroke="#282C36" stroke-width="7" stroke-linecap="round"/>
+    <line x1="856" y1="178" x2="956" y2="178" stroke="#282C36" stroke-width="7" stroke-linecap="round"/>
+    <!-- round PiP portrait window -->
+    <circle cx="1016" cy="252" r="52" fill="#2A2E38" stroke="#FFFFFF" stroke-width="5"/>
+    <circle cx="1016" cy="240" r="16" fill="#FFFFFF"/>
+    <path d="M 984 292 Q 1016 258 1048 292" fill="#FFFFFF"/>
+    <!-- recording red dot -->
+    <circle cx="1072" cy="88" r="17" fill="#FF453A"/>
+    <circle cx="1072" cy="88" r="17" fill="none" stroke="#FF453A" stroke-width="2" opacity="0.45"/>
+    <text x="800" y="360" font-size="18" fill="#A7ABB5">图标四元素 = 四个真实功能，不装饰</text>
+  </g>
+</svg>

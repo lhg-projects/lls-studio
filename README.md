@@ -1,7 +1,10 @@
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="刘老师 · 录课台：录屏、提词、出镜、成片，一个 macOS App 全包">
+</p>
+
 # 刘老师 · 录课台 · macOS 录屏提词器
 
-> [!TIP]
-> **TL;DR**：macOS 原生录屏 App，一个软件全包高清录屏 + 摄像头画中画 + 麦克风 / 系统音频 + 内置提词器 + 4K 导出，专为录教程、录课、产品演示和口播视频打造。基于 [nolangz/CueRecord](https://github.com/nolangz/CueRecord) v2.0.4（Apache License 2.0）二次开发，后续在此基础上做「刘老师 · 录课台」自己的功能。
+**一个软件全包高清录屏 + 摄像头画中画 + 麦克风 / 系统音频 + 内置提词器 + 4K 导出。** 专为录教程、录课、产品演示和口播视频打造。当前版本 **2.9.0（build 34）**，以 Xcode 工程为准。
 
 [![Platform](https://img.shields.io/badge/Platform-macOS-111111)]()
 [![Swift](https://img.shields.io/badge/Swift-FA7343?logo=swift&logoColor=white)](https://www.swift.org/)
@@ -29,6 +32,25 @@
 
 ## 快速开始
 
+### 本地自用构建（最快，不需要开发者账号）
+
+只想自己装上用，走 ad-hoc 签名即可，不需要 Apple Developer 账号：
+
+```bash
+git lfs install
+git clone https://github.com/lhg-projects/lls-studio.git
+cd lls-studio
+git lfs pull
+scripts/build-local.sh --install     # 构建并装到 ~/Applications/CueRecord.app
+```
+
+脚本会先校验 Xcode 和 Git LFS 资产（缺少模型/原生库时直接报错，不会编出一个跑不起来的包），再用 `CODE_SIGN_IDENTITY=-` 构建 Release，`--install` 会把产物拷到 `~/Applications`。
+
+两点注意：
+
+- 本仓库的 Bundle ID 是 `com.liulaoshi.llsstudio`，与上游官方包 CueRecord（`com.nolanlai.cuerecord`）**是两个独立 App**：可以和上游版本共存，但权限授权、偏好设置、Vault 路径都是各自独立的一套，首次启动要重新选 Vault 并重新授权。
+- ad-hoc 签名每次重新编译后 CDHash 会变，macOS 会把屏幕录制等权限视为新 App，需要到「系统设置 → 隐私与安全性」里重新勾选。
+
 ### 源码构建
 
 需要 **Xcode 16 或更高**（推荐最新 Xcode 26）——`xcodebuild` 只随 Xcode 提供，单独装 Command Line Tools 不够。
@@ -53,27 +75,11 @@ xcodebuild \
   build
 ```
 
-跑录制核心的专项检查：
+跑录制核心的专项检查（40 个测试函数，见 `Tests/RecordingCoreTests/main.swift`）：
 
 ```bash
 scripts/run-recording-core-tests.sh
 ```
-
-### 本地自用构建（不需要开发者账号）
-
-只想自己装上用，走 ad-hoc 签名即可，不需要 Apple Developer 账号：
-
-```bash
-scripts/build-local.sh --install     # 构建并装到 ~/Applications/CueRecord.app
-scripts/build-local.sh               # 只构建
-```
-
-脚本会先校验 Xcode 和 Git LFS 资产（缺少模型/原生库时直接报错，不会编出一个跑不起来的包），再用 `CODE_SIGN_IDENTITY=-` 构建 Release，`--install` 会把产物拷到 `~/Applications`。
-
-两点注意：
-
-- 本仓库的 Bundle ID 是 `com.liulaoshi.llsstudio`，与上游官方包 CueRecord（`com.nolanlai.cuerecord`）**是两个独立 App**：可以和上游版本共存，但权限授权、偏好设置、Vault 路径都是各自独立的一套，首次启动要重新选 Vault 并重新授权。
-- ad-hoc 签名每次重新编译后 CDHash 会变，macOS 会把屏幕录制等权限视为新 App，需要到「系统设置 → 隐私与安全性」里重新勾选。
 
 ### 预编译包
 
@@ -126,14 +132,14 @@ build.sh                  签名 + 公证的发布 DMG 构建脚本
 
 ## 本仓库改动记录
 
+> 当前版本 2.9.0（build 34，以 Xcode 工程为准）。下方记录截至 v2.2.1，v2.3.0–2.9.0 的版本记录尚未写入 README，待补——此处不编造。
+
 ### v2.2.1（权限修复 + 浮窗背景三档 + 启动崩溃修复）
 
 - **修复「授权了还一直要授权」**：ad-hoc 签名的代码要求原本是自身 cdhash，每次重新构建都变，macOS 会把新包当成另一个应用，已有的屏幕录制/摄像头/麦克风授权全部失效。现在构建脚本会重签并固定代码要求为 bundle id，授权一次长期有效。
 - **修复摄像头打不开**：Release 构建此前用 `CODE_SIGNING_REQUIRED=NO`，entitlements 从没真正签进包，hardened runtime 下系统直接抑制摄像头弹窗。现在正常签名并带上 camera / audio-input / disable-library-validation。
 - **修复摄像头窗一直黑着**：系统状态是 notDetermined 时应用只查不请求，永远不会弹窗。现在首次使用会主动请求授权。
 - 麦克风授权说明改为中文。
-
-
 - 提词器浮窗背景从「透明开关」升级为三档：**实心 / 虚化 / 全透明**。全透明模式不画底板、不画毛玻璃，只画文字，并在文字上叠一圈暗影，保证浅色文档背景上仍然可读。
 - 修复一个启动即崩的缺陷：本地化词条表里 `Background` 键重复，Swift 字典字面量重复 key 会在运行时 trap。已去重，并加回归测试 `LocalizationDictionaryHasNoDuplicateKeys`。
 - 版本号 2.2.0（build 8）。
